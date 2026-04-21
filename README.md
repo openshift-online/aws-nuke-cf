@@ -8,9 +8,8 @@ Automated periodic AWS account cleanup using [aws-nuke](https://github.com/ekris
 EventBridge Rule (cron/rate)
         |
         v
-CodeBuild Project
+CodeBuild Project (custom container image)
         |
-        +-- Downloads aws-nuke binary
         +-- Downloads your config from S3
         +-- Injects self-protection filters
         +-- Runs aws-nuke (dry-run by default)
@@ -26,11 +25,21 @@ CodeBuild Project
   ```
 - GNU Make (optional, for Makefile helpers)
 
+## Container Image
+
+CodeBuild runs aws-nuke from a custom container image (see [`Containerfile`](Containerfile)). The image is based on UBI9 and bundles aws-nuke and the AWS CLI.
+
+To build it locally:
+
+```bash
+podman build -t aws-nuke-cf -f Containerfile .
+```
+
 ## Quick Start
 
 ```bash
 # 1. Clone
-git clone https://github.com/typeid/aws-nuke-cf.git
+git clone https://github.com/openshift-online/aws-nuke-cf.git
 cd aws-nuke-cf
 
 # 2. Edit the example config with your account ID and filters
@@ -55,7 +64,7 @@ make logs
 | `ScheduleExpression` | `cron(0 3 ? * SUN *)` | EventBridge schedule (`cron(0 2 ? * MON-FRI *)`, `rate(1 day)`, etc.) |
 | `ScheduleState` | `ENABLED` | `ENABLED` or `DISABLED` |
 | `DryRun` | `true` | `true` = list only, `false` = actually delete resources |
-| `AwsNukeVersion` | `v3.64.1` | [aws-nuke release version](https://github.com/ekristen/aws-nuke/releases) |
+| `ContainerImage` | `quay.io/rrp-dev-ci/ci-image:latest` | Container image with aws-nuke and AWS CLI pre-installed |
 | `LogRetentionDays` | `30` | CloudWatch Logs retention (days) |
 | `BuildTimeoutMinutes` | `120` | CodeBuild timeout (max 480) |
 | `NotificationEmail` | *(empty)* | Email for failure alerts (creates SNS topic if set) |
