@@ -39,7 +39,7 @@ Parameters:
 
   ContainerImage:
     Type: String
-    Default: quay.io/rrp-dev-ci/aws-nuke-cf:ci-0-2046623213227610112
+    Default: quay.io/rrp-dev-ci/aws-nuke-cf:latest
     Description: >
       Container image with aws-nuke and AWS CLI pre-installed.
 
