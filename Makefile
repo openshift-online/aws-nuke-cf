@@ -5,6 +5,8 @@ REGION         ?= $(shell aws configure get region 2>/dev/null || echo us-east-1
 TAGS           ?=
 DRY_RUN        ?= true
 SCHEDULE       ?= cron(0 3 ? * SUN *)
+IMAGE          ?=
+YES            ?=
 CAPABILITIES   := CAPABILITY_NAMED_IAM
 
 # Build --tags flag from TAGS variable (space-separated Key=Value pairs)
@@ -82,7 +84,7 @@ deploy: validate ## Deploy the stack and upload the nuke config
 	echo "  Schedule: $(SCHEDULE)" && \
 	echo "  Dry run:  $(DRY_RUN)" && \
 	echo "" && \
-	read -p "Deploy? [y/N] " confirm && [ "$$confirm" = "y" ] || exit 1
+	if [ -n "$(YES)" ]; then true; else read -p "Deploy? [y/N] " confirm && [ "$$confirm" = "y" ] || exit 1; fi
 	@aws cloudformation deploy \
 		--template-file $(TEMPLATE) \
 		--stack-name $(STACK_NAME) \
@@ -91,6 +93,7 @@ deploy: validate ## Deploy the stack and upload the nuke config
 		--parameter-overrides \
 			DryRun=$(DRY_RUN) \
 			ScheduleExpression="$(SCHEDULE)" \
+			$(if $(IMAGE),ContainerImage=$(IMAGE)) \
 		$(CFN_TAGS) \
 		--no-fail-on-empty-changeset
 	@echo "Stack deployed. Uploading nuke config..."
