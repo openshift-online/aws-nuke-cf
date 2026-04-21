@@ -5,7 +5,6 @@ REGION         ?= $(shell aws configure get region 2>/dev/null || echo us-east-1
 TAGS           ?=
 DRY_RUN        ?= true
 SCHEDULE       ?= cron(0 3 ? * SUN *)
-NUKE_VERSION   ?= v3.64.1
 CAPABILITIES   := CAPABILITY_NAMED_IAM
 
 # Build --tags flag from TAGS variable (space-separated Key=Value pairs)
@@ -40,7 +39,6 @@ help: ## Show available targets
 	@echo "  REGION=region        AWS region              (default: $(REGION))"
 	@echo "  DRY_RUN=bool         Dry-run mode            (default: $(DRY_RUN))"
 	@echo "  SCHEDULE=expr        Run schedule            (default: $(SCHEDULE))"
-	@echo "  NUKE_VERSION=tag     aws-nuke version        (default: $(NUKE_VERSION))"
 	@echo "  TAGS='K=V ...'       Stack tags              (default: none)"
 	@echo ""
 	@echo "\033[1mExamples\033[0m"
@@ -83,7 +81,6 @@ deploy: validate ## Deploy the stack and upload the nuke config
 	echo "  Config:   $(CONFIG)" && \
 	echo "  Schedule: $(SCHEDULE)" && \
 	echo "  Dry run:  $(DRY_RUN)" && \
-	echo "  aws-nuke: $(NUKE_VERSION)" && \
 	echo "" && \
 	read -p "Deploy? [y/N] " confirm && [ "$$confirm" = "y" ] || exit 1
 	@aws cloudformation deploy \
@@ -94,7 +91,6 @@ deploy: validate ## Deploy the stack and upload the nuke config
 		--parameter-overrides \
 			DryRun=$(DRY_RUN) \
 			ScheduleExpression="$(SCHEDULE)" \
-			AwsNukeVersion=$(NUKE_VERSION) \
 		$(CFN_TAGS) \
 		--no-fail-on-empty-changeset
 	@echo "Stack deployed. Uploading nuke config..."
