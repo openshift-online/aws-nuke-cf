@@ -188,6 +188,35 @@ make destroy        # Delete the stack (S3 bucket retained)
 - **Logging**: All aws-nuke output goes to CloudWatch Logs with configurable retention
 - **Dry-run default**: No resources are deleted until you explicitly set `DryRun=false`
 
+### Security Audit
+
+A full adversary security scan is available at [`security/adversary.md`](security/adversary.md). Key findings and recommendations:
+
+| Severity | Finding | Status |
+|----------|---------|--------|
+| **CRITICAL** | AdministratorAccess on CodeBuild role — full account blast radius if build is compromised | Known trade-off (required for aws-nuke) |
+| **CRITICAL** | Self-protection deny policy does not prevent credential creation on arbitrary IAM resources | Open |
+| **HIGH** | Default container image uses `:latest` tag — mutable, supply-chain risk | Open |
+| **HIGH** | CodeBuild `ImagePullCredentialsType: CODEBUILD` may not work with quay.io | Open |
+| **HIGH** | AWS CLI download in Containerfile lacks integrity verification | Open |
+| **HIGH** | S3 config can define `_self_protection` preset to override injected filters | Open |
+| **MEDIUM** | Containerfile runs as root (no `USER` directive) | Open |
+| **MEDIUM** | SNS failure topic not encrypted with KMS | Open |
+| **MEDIUM** | CloudWatch Logs not encrypted with KMS | Open |
+| **MEDIUM** | Unquoted `$FLAGS` variable in build script | Open |
+| **LOW** | Dependabot only covers Docker ecosystem | Open |
+
+### Hardening Recommendations
+
+Before going to production, consider:
+
+1. **Pin the container image** to a digest (`@sha256:...`) instead of `:latest`
+2. **Add integrity verification** for the AWS CLI download in the Containerfile
+3. **Reject user configs** that contain `_self_protection` to prevent filter override
+4. **Add a non-root USER** to the Containerfile
+5. **Enable KMS encryption** on SNS topics and CloudWatch Logs
+6. **Add IAM deny** for `iam:CreateAccessKey` and `iam:CreateLoginProfile` on `*` to prevent credential creation if the build is compromised
+
 ## Cost
 
 Estimated monthly cost for a weekly run (~30 min each):

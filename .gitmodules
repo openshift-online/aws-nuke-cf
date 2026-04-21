@@ -1,0 +1,3 @@
+[submodule "aws-nuke"]
+	path = aws-nuke
+	url = https://github.com/ekristen/aws-nuke.git
