@@ -388,7 +388,7 @@ Resources:
                     FLAGS="$FLAGS --no-dry-run"
                     echo "=== LIVE MODE — resources WILL be deleted ==="
                   fi
-                  aws-nuke run --config /tmp/nuke-config.yml "$FLAGS"
+                  aws-nuke run --config /tmp/nuke-config.yml $FLAGS
                   BUILDEOF
                   chmod +x /tmp/prebuild.sh /tmp/build.sh
             pre_build:
