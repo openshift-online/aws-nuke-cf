@@ -7,6 +7,7 @@ DRY_RUN        ?= true
 SCHEDULE       ?= cron(0 3 ? * SUN *)
 IMAGE          ?=
 YES            ?=
+CONFIG_URL     ?=
 CAPABILITIES   := CAPABILITY_NAMED_IAM
 
 # Build --tags flag from TAGS variable (space-separated Key=Value pairs)
@@ -41,6 +42,7 @@ help: ## Show available targets
 	@echo "  REGION=region        AWS region              (default: $(REGION))"
 	@echo "  DRY_RUN=bool         Dry-run mode            (default: $(DRY_RUN))"
 	@echo "  SCHEDULE=expr        Run schedule            (default: $(SCHEDULE))"
+	@echo "  CONFIG_URL=url       Fetch config from URL   (default: use S3)"
 	@echo "  TAGS='K=V ...'       Stack tags              (default: none)"
 	@echo ""
 	@echo "\033[1mExamples\033[0m"
@@ -48,6 +50,7 @@ help: ## Show available targets
 	@echo "  make deploy DRY_RUN=false TAGS=\"Team=Platform Environment=sandbox\""
 	@echo "  make deploy SCHEDULE=\"cron(0 3 ? * SUN *)\" REGION=eu-west-1"
 	@echo "  make run"
+	@echo "  make deploy CONFIG_URL=https://raw.githubusercontent.com/org/repo/main/nuke-config.yaml"
 	@echo "  make logs"
 
 validate: ## Validate the CloudFormation template
@@ -80,7 +83,7 @@ deploy: validate ## Deploy the stack and upload the nuke config
 	echo "  Region:   $(REGION)" && \
 	echo "" && \
 	echo "  Stack:    $(STACK_NAME)" && \
-	echo "  Config:   $(CONFIG)" && \
+	$(if $(CONFIG_URL),echo "  Config:   $(CONFIG_URL) (URL)",echo "  Config:   $(CONFIG) (S3)") && \
 	echo "  Schedule: $(SCHEDULE)" && \
 	echo "  Dry run:  $(DRY_RUN)" && \
 	echo "" && \
@@ -94,12 +97,29 @@ deploy: validate ## Deploy the stack and upload the nuke config
 			DryRun=$(DRY_RUN) \
 			ScheduleExpression="$(SCHEDULE)" \
 			$(if $(IMAGE),ContainerImage=$(IMAGE)) \
+			ConfigSourceUrl="$(CONFIG_URL)" \
 		$(CFN_TAGS) \
 		--no-fail-on-empty-changeset
+ifdef CONFIG_URL
+	@echo "Stack deployed. Config will be fetched from URL at runtime."
+else
 	@echo "Stack deployed. Uploading nuke config..."
 	@$(MAKE) --no-print-directory upload-config
+endif
 
 upload-config: ## Upload the nuke config to S3
+	@URL=$$(aws cloudformation describe-stacks \
+		--stack-name $(STACK_NAME) \
+		--region $(REGION) \
+		--query 'Stacks[0].Parameters[?ParameterKey==`ConfigSourceUrl`].ParameterValue | [0]' \
+		--output text 2>/dev/null) && \
+	if [ -n "$$URL" ] && [ "$$URL" != "None" ]; then \
+		echo "ERROR: Stack is configured to fetch config from a URL:"; \
+		echo "  $$URL"; \
+		echo "Uploading to S3 would have no effect. Update the config at the source URL,"; \
+		echo "or redeploy without CONFIG_URL to switch back to S3 mode."; \
+		exit 1; \
+	fi
 	@BUCKET=$$(aws cloudformation describe-stacks \
 		--stack-name $(STACK_NAME) \
 		--region $(REGION) \
