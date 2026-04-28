@@ -63,6 +63,14 @@ Parameters:
       Optional email address for failure notifications. Leave empty to disable.
       If provided, an SNS topic and subscription are created.
 
+  ConfigSourceUrl:
+    Type: String
+    Default: ""
+    Description: >
+      Optional URL to download the aws-nuke config from (e.g., a raw GitHub URL).
+      When set, the config is fetched from this URL at runtime instead of S3.
+      The URL must return raw YAML content. Leave empty to use S3 (default).
+
 # =============================================================================
 # Conditions
 # =============================================================================
@@ -278,6 +286,8 @@ Resources:
             Value: !Ref NamePrefix
           - Name: DRY_RUN
             Value: !Ref DryRun
+          - Name: CONFIG_URL
+            Value: !Ref ConfigSourceUrl
       Source:
         Type: NO_SOURCE
         BuildSpec: |
@@ -302,7 +312,12 @@ Resources:
                     exit 1
                   fi
                   echo "Alias: $ALIAS"
-                  aws s3 cp "s3://${CONFIG_BUCKET}/nuke-config.yml" /tmp/user-config.yml --quiet
+                  if [ -n "$CONFIG_URL" ]; then
+                    echo "Downloading config from: $CONFIG_URL"
+                    curl -fsSL "$CONFIG_URL" -o /tmp/user-config.yml
+                  else
+                    aws s3 cp "s3://${CONFIG_BUCKET}/nuke-config.yml" /tmp/user-config.yml --quiet
+                  fi
                   if ! grep -q "$ACCOUNT" /tmp/user-config.yml; then
                     echo "ERROR: Account $ACCOUNT not found in nuke config."
                     echo "Add it to the 'accounts' section of your config."
