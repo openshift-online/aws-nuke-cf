@@ -21,7 +21,9 @@ Parameters:
     Description: >
       EventBridge schedule expression (UTC). Examples: "cron(0 3 ? * SUN *)"
       (Sundays at 3am), "cron(0 2 ? * MON-FRI *)" (weekdays at 2am),
-      "rate(1 day)" (every 24h).
+      "rate(1 day)" (every 24h). WARNING: Sub-hourly rates (e.g. "rate(1 minute)")
+      will trigger aws-nuke hundreds of times per day. In live mode this causes
+      continuous resource deletion. Use daily or weekly schedules.
 
   ScheduleState:
     Type: String
@@ -197,14 +199,27 @@ Resources:
               - iam:Put*
               - iam:Attach*
               - iam:Upload*
+              - iam:PassRole
+              - iam:UpdateAssumeRolePolicy
+              - iam:UpdateRole
+              - iam:SetDefaultPolicyVersion
               - sts:AssumeRole
               - sts:AssumeRoleWithSAML
               - sts:AssumeRoleWithWebIdentity
+              - sts:GetFederationToken
+              - sts:GetSessionToken
               - organizations:*
               - account:*
               - ec2:RunInstances
               - ec2:StartInstances
               - ec2:RequestSpot*
+              - lambda:CreateFunction
+              - lambda:UpdateFunctionCode
+              - glue:CreateJob
+              - secretsmanager:GetSecretValue
+              - ssm:GetParameter
+              - ssm:GetParametersByPath
+              - ssm:GetParameters
             Resource: "*"
           - Sid: DenyIAMSelf
             Effect: Deny
@@ -313,6 +328,10 @@ Resources:
                   fi
                   echo "Alias: $ALIAS"
                   if [ -n "$CONFIG_URL" ]; then
+                    case "$CONFIG_URL" in
+                      https://*) ;;
+                      *) echo "ERROR: CONFIG_URL must use HTTPS. Got: $CONFIG_URL"; exit 1 ;;
+                    esac
                     echo "Downloading config from: $CONFIG_URL"
                     curl -fsSL "$CONFIG_URL" -o /tmp/user-config.yml
                   else
@@ -323,8 +342,18 @@ Resources:
                     echo "Add it to the 'accounts' section of your config."
                     exit 1
                   fi
+                  if ! echo "$STACK_NAME" | grep -qE '^[a-zA-Z][-a-zA-Z0-9]*$'; then
+                    echo "ERROR: STACK_NAME contains unsafe characters: $STACK_NAME"
+                    exit 1
+                  fi
+                  if ! echo "$NAME_PREFIX" | grep -qE '^[a-z][a-z0-9-]*$'; then
+                    echo "ERROR: NAME_PREFIX contains unsafe characters: $NAME_PREFIX"
+                    exit 1
+                  fi
                   echo "=== Injecting self-protection ==="
-                  cp /tmp/user-config.yml /tmp/nuke-config.yml
+                  SECURE_DIR=$(mktemp -d)
+                  chmod 700 "$SECURE_DIR"
+                  cp /tmp/user-config.yml "$SECURE_DIR/nuke-config.yml"
                   {
                   echo '  _self_protection:'
                   echo '    filters:'
@@ -374,12 +403,12 @@ Resources:
                   echo '      CloudFormationStack:'
                   echo '        - type: exact'
                   echo "          value: \"$STACK_NAME\""
-                  } > /tmp/_protection.yml
-                  if grep -q '^presets:' /tmp/nuke-config.yml; then
-                    sed -i '/^presets:/r /tmp/_protection.yml' /tmp/nuke-config.yml
+                  } > $SECURE_DIR/_protection.yml
+                  if grep -q '^presets:' $SECURE_DIR/nuke-config.yml; then
+                    sed -i "/^presets:/r $SECURE_DIR/_protection.yml" $SECURE_DIR/nuke-config.yml
                   else
-                    printf '\npresets:\n' >> /tmp/nuke-config.yml
-                    cat /tmp/_protection.yml >> /tmp/nuke-config.yml
+                    printf '\npresets:\n' >> $SECURE_DIR/nuke-config.yml
+                    cat $SECURE_DIR/_protection.yml >> $SECURE_DIR/nuke-config.yml
                   fi
                   awk '/^[[:space:]]+presets:.*\[/ {
                     sub(/\]/, ", _self_protection]")
@@ -391,11 +420,15 @@ Resources:
                     indent = $0; sub(/presets:.*/, "", indent)
                     print indent "  - _self_protection"
                     next
-                  } { print }' /tmp/nuke-config.yml > /tmp/nuke-config.tmp && mv /tmp/nuke-config.tmp /tmp/nuke-config.yml
+                  } { print }' $SECURE_DIR/nuke-config.yml > $SECURE_DIR/nuke-config.tmp && mv $SECURE_DIR/nuke-config.tmp $SECURE_DIR/nuke-config.yml
+                  chmod 400 "$SECURE_DIR/nuke-config.yml"
+                  echo "$SECURE_DIR" > /tmp/.nuke_secure_dir
+                  chmod 600 /tmp/.nuke_secure_dir
                   echo "Self-protection injected. Config ready."
                   PREBUILDEOF
                   cat > /tmp/build.sh << 'BUILDEOF'
                   #!/bin/bash
+                  SECURE_DIR=$(cat /tmp/.nuke_secure_dir)
                   FLAGS="--no-prompt --prompt-delay 3"
                   if [ "$DRY_RUN" = "true" ]; then
                     echo "=== DRY RUN ==="
@@ -403,7 +436,7 @@ Resources:
                     FLAGS="$FLAGS --no-dry-run"
                     echo "=== LIVE MODE — resources WILL be deleted ==="
                   fi
-                  aws-nuke run --config /tmp/nuke-config.yml $FLAGS
+                  aws-nuke run --config $SECURE_DIR/nuke-config.yml $FLAGS
                   BUILDEOF
                   chmod +x /tmp/prebuild.sh /tmp/build.sh
             pre_build:
@@ -518,6 +551,9 @@ Resources:
               Service: events.amazonaws.com
             Action: sns:Publish
             Resource: !Ref FailureNotificationTopic
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/${NamePrefix}-*
 
 # =============================================================================
 # Outputs
