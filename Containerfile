@@ -1,4 +1,4 @@
-FROM registry.access.redhat.com/ubi9/ubi@sha256:50701171b9917ed51048b614924598d45b00bce9a64b73860c057922fc13bec2
+FROM registry.access.redhat.com/ubi9/ubi@sha256:16e9e43d99e181463513cc84a514859b1abb9460f1c4d9e208da4b4e51cd5cc3
 
 ARG AWS_NUKE_VERSION=3.64.1
 ARG AWS_CLI_VERSION=2.34.19
