@@ -8,6 +8,11 @@ SCHEDULE       ?= cron(0 3 ? * SUN *)
 IMAGE          ?=
 YES            ?=
 CONFIG_URL     ?=
+BUILD_TIMEOUT  ?= 360
+MAX_PASSES     ?= 6
+PER_PASS_TIMEOUT ?= 45
+SETTLE_SLEEP   ?= 120
+MAX_WAIT_RETRIES ?= 30
 CAPABILITIES   := CAPABILITY_NAMED_IAM
 
 # Build --tags flag from TAGS variable (space-separated Key=Value pairs)
@@ -96,6 +101,11 @@ deploy: validate ## Deploy the stack and upload the nuke config
 		--parameter-overrides \
 			DryRun=$(DRY_RUN) \
 			ScheduleExpression="$(SCHEDULE)" \
+			BuildTimeoutMinutes=$(BUILD_TIMEOUT) \
+			MaxPasses=$(MAX_PASSES) \
+			PerPassTimeoutMinutes=$(PER_PASS_TIMEOUT) \
+			SettleSleepSeconds=$(SETTLE_SLEEP) \
+			MaxWaitRetries=$(MAX_WAIT_RETRIES) \
 			$(if $(IMAGE),ContainerImage=$(IMAGE)) \
 			ConfigSourceUrl="$(CONFIG_URL)" \
 		$(CFN_TAGS) \
