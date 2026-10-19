@@ -63,10 +63,14 @@ make logs
 | `NamePrefix` | `aws-nuke` | Prefix for all resource names |
 | `ScheduleExpression` | `cron(0 3 ? * SUN *)` | EventBridge schedule (`cron(0 2 ? * MON-FRI *)`, `rate(1 day)`, etc.) |
 | `ScheduleState` | `ENABLED` | `ENABLED` or `DISABLED` |
-| `DryRun` | `true` | `true` = list only, `false` = actually delete resources |
+| `DryRun` | `true` | `true` = list only (single pass), `false` = convergence loop that actually deletes |
 | `ContainerImage` | `quay.io/rrp-dev-ci/ci-image:latest` | Container image with aws-nuke and AWS CLI pre-installed |
 | `LogRetentionDays` | `30` | CloudWatch Logs retention (days) |
-| `BuildTimeoutMinutes` | `120` | CodeBuild timeout (max 480) |
+| `BuildTimeoutMinutes` | `360` | CodeBuild hard ceiling for the whole loop (max 480); keep above MaxPasses × PerPassTimeoutMinutes + settle |
+| `MaxPasses` | `6` | Max aws-nuke passes per run; each pass re-scans from scratch |
+| `PerPassTimeoutMinutes` | `45` | Backstop timeout for a single pass so a stall can't eat the whole build (healthy passes exit sooner) |
+| `SettleSleepSeconds` | `120` | Wait between passes for async AWS cleanup (ENI reclaim, EKS delete) |
+| `MaxWaitRetries` | `30` | aws-nuke `--max-wait-retries`; caps per-pass waiting so a pass ends in minutes, not at the timeout |
 | `NotificationEmail` | *(empty)* | Email for failure alerts (creates SNS topic if set) |
 
 ### Passing Parameters

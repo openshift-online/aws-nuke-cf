@@ -53,10 +53,56 @@ Parameters:
 
   BuildTimeoutMinutes:
     Type: Number
-    Default: 120
+    Default: 360
     MinValue: 5
     MaxValue: 480
-    Description: CodeBuild timeout in minutes (max 480 / 8 hours).
+    Description: >
+      CodeBuild hard timeout in minutes (max 480 / 8 hours). This is the ceiling
+      for the whole convergence loop; size it above MaxPasses * PerPassTimeoutMinutes
+      plus settle sleeps so the loop can exit cleanly before CodeBuild kills it.
+
+  MaxPasses:
+    Type: Number
+    Default: 6
+    MinValue: 1
+    MaxValue: 20
+    Description: >
+      Maximum number of aws-nuke passes per run. Each pass re-scans from scratch,
+      so later passes catch resources recreated after an earlier scan (e.g. Karpenter
+      nodes) and dependencies that cleared since (e.g. ENIs going available).
+
+  PerPassTimeoutMinutes:
+    Type: Number
+    Default: 45
+    MinValue: 1
+    MaxValue: 120
+    Description: >
+      Timeout for a single aws-nuke pass. A pass that stalls (e.g. retrying a
+      dependency chain or an undeletable resource) is cut off here so it cannot
+      consume the whole build budget; the loop then re-scans on the next pass.
+
+  SettleSleepSeconds:
+    Type: Number
+    Default: 120
+    MinValue: 0
+    MaxValue: 1800
+    Description: >
+      Seconds to wait between passes so asynchronous AWS cleanup can complete
+      (e.g. Lambda Hyperplane ENI reclaim, EKS control-plane deletion) before the
+      next pass re-scans.
+
+  MaxWaitRetries:
+    Type: Number
+    Default: 30
+    MinValue: 0
+    MaxValue: 500
+    Description: >
+      Passed to aws-nuke as --max-wait-retries. Caps how long a single pass waits
+      on resources stuck in the 'waiting' state (undeletable service-managed
+      resources, or slow dependencies) before it gives up, so a pass ends in
+      minutes instead of running until the per-pass timeout. The convergence loop
+      re-scans on the next pass, so anything abandoned here is retried. 0 = wait
+      indefinitely (aws-nuke default); not recommended with this loop.
 
   NotificationEmail:
     Type: String
@@ -303,6 +349,14 @@ Resources:
             Value: !Ref DryRun
           - Name: CONFIG_URL
             Value: !Ref ConfigSourceUrl
+          - Name: MAX_PASSES
+            Value: !Ref MaxPasses
+          - Name: PER_PASS_TIMEOUT_MIN
+            Value: !Ref PerPassTimeoutMinutes
+          - Name: SETTLE_SLEEP_SECONDS
+            Value: !Ref SettleSleepSeconds
+          - Name: MAX_WAIT_RETRIES
+            Value: !Ref MaxWaitRetries
       Source:
         Type: NO_SOURCE
         BuildSpec: |
@@ -428,15 +482,56 @@ Resources:
                   PREBUILDEOF
                   cat > /tmp/build.sh << 'BUILDEOF'
                   #!/bin/bash
+                  # Convergence loop. A single aws-nuke run scans once and only ever
+                  # works from that initial list (its internal retries never re-list),
+                  # so resources created after the scan (e.g. Karpenter nodes respawned
+                  # while their cluster is being deleted) are missed, and a run that
+                  # stalls on a dependency chain gets killed at the CodeBuild timeout
+                  # leaving everything else behind. We instead run repeated passes,
+                  # each re-scanning from scratch, until aws-nuke reports a clean run.
                   SECURE_DIR=$(cat /tmp/.nuke_secure_dir)
-                  FLAGS="--no-prompt --prompt-delay 3"
+                  CONFIG="$SECURE_DIR/nuke-config.yml"
+                  BASE_FLAGS="--no-prompt --prompt-delay 3 --max-wait-retries ${MAX_WAIT_RETRIES:-30}"
+
                   if [ "$DRY_RUN" = "true" ]; then
-                    echo "=== DRY RUN ==="
-                  else
-                    FLAGS="$FLAGS --no-dry-run"
-                    echo "=== LIVE MODE — resources WILL be deleted ==="
+                    echo "=== DRY RUN (list only, single pass) ==="
+                    aws-nuke run --config "$CONFIG" $BASE_FLAGS
+                    exit $?
                   fi
-                  aws-nuke run --config $SECURE_DIR/nuke-config.yml $FLAGS
+                  echo "=== LIVE MODE — convergence loop (resources WILL be deleted) ==="
+
+                  MAX_PASSES="${MAX_PASSES:-6}"
+                  PER_PASS_TIMEOUT_MIN="${PER_PASS_TIMEOUT_MIN:-45}"
+                  SETTLE_SLEEP_SECONDS="${SETTLE_SLEEP_SECONDS:-120}"
+
+                  for pass in $(seq 1 "$MAX_PASSES"); do
+                    echo "----- aws-nuke pass ${pass}/${MAX_PASSES} (per-pass timeout ${PER_PASS_TIMEOUT_MIN}m) -----"
+                    # Per-pass timeout so one stalled pass cannot consume the whole
+                    # build; the next pass re-scans from scratch. --kill-after sends
+                    # SIGKILL 60s later in case aws-nuke does not exit on SIGTERM.
+                    timeout --kill-after=60s "${PER_PASS_TIMEOUT_MIN}m" \
+                      aws-nuke run --config "$CONFIG" $BASE_FLAGS --no-dry-run
+                    rc=$?
+                    # aws-nuke exits 0 only when nothing is left failed or waiting
+                    # (everything finished or was filtered/skipped) -- that is our
+                    # convergence signal. On any non-zero exit it has already printed
+                    # the resources it could not remove.
+                    if [ "$rc" -eq 0 ]; then
+                      echo "Converged: account clean after ${pass} pass(es)."
+                      exit 0
+                    fi
+                    echo "pass ${pass}: not clean yet (aws-nuke rc=${rc})."
+                    if [ "$pass" -lt "$MAX_PASSES" ]; then
+                      echo "Settling ${SETTLE_SLEEP_SECONDS}s for async AWS cleanup before re-scan..."
+                      sleep "$SETTLE_SLEEP_SECONDS"
+                    fi
+                  done
+
+                  # Never reached a clean pass: resources remain (aws-nuke printed the
+                  # offending resources above). Exit non-zero so the build is marked
+                  # failed (and SNS notifies if NotificationEmail is set on the stack).
+                  echo "=== Resources still remain after ${MAX_PASSES} passes (see aws-nuke output above). Failing the build. ==="
+                  exit 1
                   BUILDEOF
                   chmod +x /tmp/prebuild.sh /tmp/build.sh
             pre_build:
